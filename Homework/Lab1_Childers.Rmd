@@ -1,0 +1,191 @@
+---
+title: "Lab 1: NYT API"
+author: "Heather Childers"
+date: "2024-04-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(jsonlite) #convert results from API queries into R-friendly formats 
+library(tidyverse)
+library(tidytext) #text data management and analysis
+library(ggplot2) #plot word frequencies and publication dates
+
+#assign API key.  When you create a NYT Dev account, you will be given a key
+API_KEY <- "Y1cBeoJugW3G1KzN8qM99CVoE5IF31tF"
+```
+
+Today we will be grabbing some data from the New York Times database via their API, then running some basic string manipulations, trying out the tidytext format, and creating some basic plots.
+
+<https://developer.nytimes.com/>
+
+### Connect to the New York Times API and send a query
+
+We have to decide which New York Times articles we are interested in examining. For this exercise, I chose articles about Deb Haaland, the current US Secretary of the Interior. As a member of the Laguna Pueblo Tribe, Haaland is the first Native American to serve as a Cabinet secretary. Very cool!
+
+We'll send a query to the NY Times API using a URL that contains information about the articles we'd like to access.
+
+fromJSON() is a wrapper function that handles our request and the API response. We'll use it to create an object,t, with the results of our query. The flatten = T argument converts from the nested JSON format to an R-friendlier form.
+
+```{r api, eval = FALSE}
+
+#create the query url
+url <- paste("http://api.nytimes.com/svc/search/v2/articlesearch.json?q=haaland&api-key=",API_KEY, sep ="")
+
+#send the request, receive the response, and flatten
+t <- fromJSON(url, flatten = T)
+```
+
+## Assignment (Due Tuesday 4/9 11:59pm)
+
+Reminder: Please suppress all long and extraneous output from your submissions (ex: lists of tokens).
+
+1.  Create a free New York Times account (<https://developer.nytimes.com/get-started>)
+
+2.  Pick an interesting environmental key word(s) and use the {jsonlite} package to query the API. Pick something high profile enough and over a large enough time frame that your query yields enough articles for an interesting examination.
+
+For this task I've decided to use the words fire and suppression for my NYT Search.
+
+```{r}
+term1 <- "fire" 
+term2 <- "&suppression" # Need to use $ to string  together separate terms
+begin_date <- "20100101"
+end_date <- "20240101"
+
+#construct the query url using API operators
+baseurl <- paste0("http://api.nytimes.com/svc/search/v2/articlesearch.json?q=",term1,term2,"&begin_date=",begin_date,"&end_date=",end_date,"&facet_filter=true&api-key=",API_KEY, sep="")
+
+#examine our query url
+#baseurl
+```
+
+```{r}
+#dig into the JSON object to find total hits
+initialQuery <- fromJSON(baseurl)
+#Can dig in to find max results, but I'll shorten it to 10 for demo
+#maxPages <- round((initialQuery$response$meta$hits[1] / 10)-1) 
+maxPages <- 10
+#initiate a list to hold results of our for loop
+pages <- list()
+
+## partially complete loop
+for(i in 0:maxPages){
+  nytSearch <- fromJSON(paste0(baseurl, "&page=", i), flatten = TRUE) %>% data.frame() 
+  message("Retrieving page ", i)
+  pages[[i+1]] <- nytSearch 
+  Sys.sleep(12) 
+}
+
+nytDat <- bind_rows(pages)
+```
+
+1.  Recreate the publications per day and word frequency plots using the first paragraph field. This time filter on the response.docs.news_desk variable to winnow out irrelevant results.
+
+Since I wanted to see results that were related to climate change and not building fires, I filtered the response.docs.news_desk variable to only come from the Climate desk.
+
+```{r}
+#nytDat[6] #The 6th column, "response.doc.lead_paragraph", is the one we want here. 
+
+#use tidytext::unnest_tokens to put in tidy form.  
+#If there are some types of news that we'd like to exclude, we can filter()
+tokenized <- nytDat %>%
+  filter(response.docs.news_desk == "Climate") %>%
+unnest_tokens(word, response.docs.lead_paragraph) #word is the new column, paragraph is the source
+
+#tokenized[,"word"]
+```
+
+### Publishing Date Plot 1
+
+```{r}
+#Publications poer day plot
+nytDat %>%
+  mutate(pubDay=gsub("T.*","",response.docs.pub_date)) %>% 
+  group_by(pubDay) %>%
+  summarise(count=n()) %>%
+  filter(count >= 2) %>%
+  ggplot() +
+  geom_bar(aes(x=reorder(pubDay, count), y=count), stat="identity") +
+  coord_flip() #bring date so bars go longwise
+```
+
+-   Make some (at least 3) transformations to the corpus including: add context-specific stopword(s), stem a key term and its variants, remove numbers)
+
+For this part of the task I started by removing the standard stopwords, then I chose to remove numbers, words ending is 's and words ending in 't
+
+```{r}
+data(stop_words) #load stop_words from {tidytext}
+
+#we'll do an anti_join to remove words from out data that occur in a stop word lexicon.
+tokenized <- tokenized %>%
+  anti_join(stop_words)
+
+#inspect the list of tokens (words)
+#tokenized$word
+
+clean_tokens <- str_remove_all(tokenized$word, "[:digit:]") #remove all numbers
+
+clean_tokens <- gsub("’s", '', clean_tokens)
+clean_tokens <- gsub("’t", '', clean_tokens)
+
+tokenized$clean <- clean_tokens
+
+tokenized <- subset(tokenized, clean!="")
+#tokenized$word
+```
+
+### Word Count Plot 1
+
+```{r}
+#now let's try that plot again
+tokenized %>%
+  count(word, sort = TRUE) %>%
+  filter(n > 1) %>% #this time use a much lower filter
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word)) +
+  geom_col() +
+  labs(y = NULL)
+```
+
+4.  Recreate the publications per day and word frequency plots using the headlines variable (response.docs.headline.main). Compare the distributions of word frequencies between the first paragraph and headlines. Do you see any difference?
+
+```{r}
+tokenized_headline <- nytDat %>%
+  filter(response.docs.news_desk == "Climate") %>%
+unnest_tokens(word, response.docs.headline.main) #word is the new column, paragraph is the source
+
+tokenized_headline[,"word"]
+
+#we'll do an anti_join to remove words from out data that occur in a stop word lexicon.
+tokenized_headline <- tokenized_headline %>%
+  anti_join(stop_words)
+```
+
+### Word Count Plot 2
+
+```{r}
+tokenized_headline %>%
+  count(word, sort = TRUE) %>%
+  filter(n > 0) %>% #this time use a much lower filter
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word)) +
+  geom_col() +
+  labs(y = NULL)
+```
+
+### Publication Date Plot 2
+
+```{r}
+#Publications per day plot
+nytDat %>%
+  mutate(pubDay=gsub("T.*","",response.docs.pub_date)) %>% 
+  group_by(pubDay) %>%
+  summarise(count=n()) %>%
+  filter(count >= 2) %>%
+  ggplot() +
+  geom_bar(aes(x=reorder(pubDay, count), y=count), stat="identity") +
+  coord_flip() #bring date so bars go longwise
+```
+
+There aren't any differences between the publication date plots because the plot is made before you create the tokenized dataframe with the filtering for words. However, there are obvious differences between the word count plots. There are no words that are said more than twice within the headlines of the 10 articles but there are 2 words from the first paragraph of each article that occur more than once "hot" and "dry" which makes sense due to the terms being "fire" and "suppression". It makes sense that there will be less words that are duplicated when the pool of words is much smaller for just the headlines than for the entire first paragraph.
