@@ -1,0 +1,224 @@
+---
+title: "Lab3"
+author: "Heather Childers"
+date: "2024-04-17"
+output: html_document
+---
+
+```{r packages, message = FALSE}
+library(quanteda)
+library(tm)
+library(topicmodels)
+library(ldatuning)
+library(tidyverse)
+library(tidytext)
+library(reshape2)
+library(here)
+#Libraries from last week
+library(LexisNexisTools)
+library(dplyr)
+library(readr)
+library(stringr)
+library(here)
+library(tidytext)
+library(tidyr) #pivot_wider()
+library(ggplot2)
+```
+
+### Assignment Lab 3:
+
+Due next week: April 23 at 11:59PM
+
+For this assignment you'll use the article data you downloaded from Nexis Uni in Week 2.
+
+```{r, message = FALSE}
+#Load in the data from last week
+post_files <- list.files(pattern = ".docx", path = here("TxtSent1"),
+                      full.names = TRUE, 
+                      recursive = TRUE, 
+                      ignore.case = TRUE)
+
+# read in files
+dat <- lnt_read(post_files, convert_date = FALSE, remove_cover = FALSE)
+
+#Get the text data
+meta_df <- dat@meta
+articles_df <- dat@articles
+paragraphs_df <- dat@paragraphs
+
+#Create a table from the data
+data_tbl<- tibble(Date=meta_df$Date, Headline = meta_df$Headline, id = articles_df$ID, text = articles_df$Article)
+```
+
+1.  Create a corpus from your articles.
+
+```{r}
+corpus <- corpus(x = data_tbl, text_field = "text")
+```
+
+1.  Clean the data as appropriate.
+
+```{r}
+data(stop_words) #load stop_words from {tidytext}
+add_stops <- character(length(stop_words))
+
+for (i in 1:1149) {
+  add_stops[i] <- stop_words$word[[i]]
+}
+```
+
+```{r}
+#load stop words
+#Clean the data
+toks <- tokens(corpus, remove_punct = T, remove_numbers = T)
+#Remove the stop words
+toks1 <- tokens_select(toks, pattern = add_stops, selection = "remove")
+
+dfm1 <- dfm(toks1, tolower = T)
+dfm2 <- dfm_trim(dfm1, min_docfreq = 2)
+
+#head(dfm)
+
+sel_idx <- slam::row_sums(dfm2)>0
+dfm <- dfm2[sel_idx,]
+```
+
+1.  Run three models (i.e. with 3 values of k) and select the overall best value for k (the number of topics) - include some justification for your selection: theory, FindTopicsNumber() optimization metrics, interpretability, LDAvis. Select the best single value of k.
+
+2.  Im using the `FindTopicsNumber()` function to get an idea of what the best number of topics to test is, from the results it looks like 3 and 4 are giving the best options.
+
+```{r, warning = FALSE}
+library(tictoc)
+tic()
+result <- FindTopicsNumber(dfm,
+                           topics = seq(from = 2, 
+                                        to = 10, 
+                                        by = 1),
+metrics = c("CaoJuan2009", "Deveaud2014"),
+method = "Gibbs",
+verbose = T)
+toc()
+FindTopicsNumber_plot(result)
+```
+
+```{r, results='hide'}
+k <- 3
+set.seed(808)
+topicModel_k3 <- LDA(dfm,
+                     k, 
+                     method= "Gibbs",
+                     control= list(iter = 1000,
+                             verbose = 25))
+```
+
+```{r}
+result <- posterior(topicModel_k3)
+attributes(result)
+
+beta <- result$terms
+theta <- result$topics
+dim(beta)
+dim(theta)
+terms(topicModel_k3, 10)
+```
+
+1.  Plot the top terms in each topic and the distribution of topics across a sample of the documents (constrained by what looks good in the plot).
+
+```{r}
+topics <- tidy(topicModel_k3, matrix = "beta")
+
+top_terms <- topics %>%
+  group_by(topic) %>%
+  top_n(10, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+top_terms %>%
+  mutate(term = reorder_within(term, beta, topic, sep = "")) %>%
+  ggplot(aes(term, beta, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free_y") +
+  scale_x_reordered()+
+  coord_flip()
+
+```
+
+1.  Take a stab at interpreting the resulting topics. What are the key themes discussed in the articles in your data base?
+
+Okay, I think the three categories here are 1(hydrological) 2(Political/financial) 3(agricultural)
+
+```{r, results='hide'}
+k <- 4
+set.seed(808)
+topicModel_k4 <- LDA(dfm,
+                     k, 
+                     method= "Gibbs",
+                     control= list(iter = 1000,
+                             verbose = 25))
+```
+
+```{r}
+result <- posterior(topicModel_k4)
+attributes(result)
+
+beta <- result$terms
+theta <- result$topics
+dim(beta)
+dim(theta)
+terms(topicModel_k4, 10)
+
+topics <- tidy(topicModel_k4, matrix = "beta")
+
+top_terms <- topics %>%
+  group_by(topic) %>%
+  top_n(10, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+top_terms %>%
+  mutate(term = reorder_within(term, beta, topic, sep = "")) %>%
+  ggplot(aes(term, beta, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free_y") +
+  scale_x_reordered()+
+  coord_flip()
+```
+
+For these categories, it seems that the categories are a little bit more specific. It seems like these might be agriculture, finance/politics, aquaculture, and algae. This seems like it might be the better choice for categories because there are categories for algae blooms and the cause of algae blooms(fertilizers/nitrogen).
+
+```{r, results='hide'}
+k <- 5
+set.seed(808)
+topicModel_k5 <- LDA(dfm,
+                     k, 
+                     method= "Gibbs",
+                     control= list(iter = 1000,
+                             verbose = 25))
+```
+
+```{r}
+result <- posterior(topicModel_k5)
+attributes(result)
+
+beta <- result$terms
+theta <- result$topics
+dim(beta)
+dim(theta)
+terms(topicModel_k5, 10)
+
+topics <- tidy(topicModel_k5, matrix = "beta")
+
+top_terms <- topics %>%
+  group_by(topic) %>%
+  top_n(10, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+top_terms %>%
+  mutate(term = reorder_within(term, beta, topic, sep = "")) %>%
+  ggplot(aes(term, beta, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free_y") +
+  scale_x_reordered()+
+  coord_flip()
+```

@@ -13,13 +13,45 @@ output: html_document
 
 -   Choose a key search term or terms to define a set of articles.
 
+    -   "Algal Blooms" in Journals & Magazines published between 2016-2018
+
 -   Use your search term along with appropriate filters to obtain and download a batch of at least 100 full text search results (.docx). You are limited to downloading 100 articles at a time, so if you have more results than that, you have to download them in batches (rows 1-100, 101-200, 201-300 etc.)
 
-    Guidance for {LexisNexisTools} : <https://github.com/JBGruber/LexisNexisTools/wiki/Downloading-Files-From-Nexis>
+    -   Downloaded roughly 227 articles
+
+        Guidance for {LexisNexisTools} : <https://github.com/JBGruber/LexisNexisTools/wiki/Downloading-Files-From-Nexis>
 
 -   Read your Nexis article documents into RStudio.
 
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(LexisNexisTools)
+library(dplyr)
+library(readr)
+library(stringr)
+library(here)
+library(tidytext)
+library(tidyr) #pivot_wider()
+library(ggplot2)
+```
+
+```{r, message = FALSE}
+post_files <- list.files(pattern = ".docx", path = here("TxtSent1"),
+                      full.names = TRUE, 
+                      recursive = TRUE, 
+                      ignore.case = TRUE)
+
+# read in files
+dat <- lnt_read(post_files, convert_date = FALSE, remove_cover = FALSE)
+```
+
 -   Use the full text of the articles for the analysis. Inspect the data (in particular the full-text article data).
+
+```{r}
+meta_df <- dat@meta
+articles_df <- dat@articles
+paragraphs_df <- dat@paragraphs
+```
 
 <!-- -->
 
@@ -27,10 +59,133 @@ output: html_document
 
 -   Remove any clear duplicate articles. LNT has a method for this, but it doesn't seem to work, so you probably need to do it manually.
 
+```{r}
+data_tbl<- tibble(Date=meta_df$Date, Headline = meta_df$Headline, id = articles_df$ID, text = articles_df$Article)
+```
+
 ### Explore your data and conduct the following analyses:
 
 1.  Calculate mean sentiment across all your articles
-2.  Sentiment by article plot. The one provided in class needs significant improvement.
-3.  Most common nrc emotion words and plot by emotion
-4.  Look at the nrc contribution to emotion by word plots. Identify and reclassify or remove at least one term that gives misleading results in your context.
-5.  Plot the amount of nrc emotion words as a percentage of all the emotion words used each day (aggregate text from articles published on the same day). How does the distribution of emotion words change over time? Can you think of any reason this would be the case?
+
+```{r}
+#load the bing sentiment lexicon from tidytext
+bing_sent <-  get_sentiments("bing")
+head(bing_sent)
+```
+
+```{r}
+text_words <- data_tbl %>% 
+  unnest_tokens(output = word, input = text, token = 'words')
+
+#Let's start with a simple numerical score
+sent_words <- text_words %>%
+  anti_join(stop_words, by='word') %>%
+  inner_join(bing_sent, by='word') %>%
+  mutate(sent_num = case_when(sentiment =='negative'~-1,
+                              sentiment =='positive'~1))
+  
+sent_words
+```
+
+```{r}
+sent_article <- sent_words %>%
+  group_by(Headline) %>%
+  count(id, sentiment) %>%
+  pivot_wider(names_from = sentiment, values_from=n)%>%
+  mutate(polarity = positive-negative)
+  
+#Mean polarity
+mean(sent_article$polarity, na.rm = T)
+```
+
+1.  Sentiment by article plot. The one provided in class needs significant improvement.
+
+```{r}
+ggplot(sent_article, aes(x = id)) +
+  geom_col(aes(y = negative), fill = "#E41A1C", alpha = 0.8) +  # Red color for negative sentiment
+  geom_col(aes(y = positive), fill = "#377EB8", alpha = 0.6) +  # Blue color for positive sentiment
+  labs(title = 'Sentiment Analysis: Algal Blooms', y = 'Sentiment Score', x = NULL) +
+  theme_minimal() +  # Clean minimal theme
+  theme(plot.title = element_text(face = "bold", size = 16, hjust = 0.5),  # Title formatting
+        axis.text.x = element_text(angle = 45, vjust = 0.5, hjust = 1),  # Rotate x-axis labels
+        axis.title.y = element_text(margin = margin(r = 10)))  # Adjust y-axis title margin
+```
+
+1.  Most common nrc emotion words and plot by emotion
+
+```{r}
+nrc_sent <- get_sentiments('nrc')
+nrc_word_counts <- text_words %>%
+  anti_join(stop_words, by='word') %>%
+  inner_join(nrc_sent) %>%
+  count(word, sentiment, sort=T)
+
+nrc_word_counts %>%
+  group_by(sentiment) %>%
+  slice_max(n,n=5)%>%
+  ungroup() %>%
+  mutate(word = reorder(word, n))%>%
+  ggplot(aes(n,word,fill = sentiment))+
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales="free_y")+
+  labs(x='Contribution to Sentiment', y = NULL)
+```
+
+1.  Look at the nrc contribution to emotion by word plots. Identify and reclassify or remove at least one term that gives misleading results in your context.
+    1.  The words I removed were "blue", "green" and "bloom." green and blue are referencing the kind of algae blooms that were happening and bloom was listed as positive when bloom in this context is negative.
+
+```{r}
+nrc_word_counts <- text_words %>%
+  anti_join(stop_words, by='word') %>%
+  inner_join(nrc_sent) %>%
+  filter(word != 'bloom') %>% 
+  filter(word != 'blue') %>% 
+  filter(word != 'green') %>% 
+  count(word, sentiment, sort=T)
+
+nrc_word_counts %>%
+  group_by(sentiment) %>%
+  slice_max(n,n=5)%>%
+  ungroup() %>%
+  mutate(word = reorder(word, n))%>%
+  ggplot(aes(n,word,fill = sentiment))+
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales="free_y")+
+  labs(x='Contribution to Sentiment', y = NULL)
+```
+
+1.  Plot the amount of nrc emotion words as a percentage of all the emotion words used each day (aggregate text from articles published on the same day). How does the distribution of emotion words change over time? Can you think of any reason this would be the case?
+
+```{r}
+# Convert publish_date to Date format
+text_words$Date <- as.Date(text_words$Date, format = "%B %d, %Y")
+
+# Tokenize the article text and join with publish_date
+words_by_date <- text_words %>%
+  unnest_tokens(word, word) %>%
+  mutate(word = tolower(word)) %>%  # Convert words to lowercase for consistency
+  inner_join(get_sentiments("nrc"), by = "word") %>%  # Join with NRC sentiment lexicon
+  count(Date, sentiment)  # Count emotion words by date and sentiment
+
+# Calculate total emotion words by date
+total_words_by_date <- words_by_date %>%
+  group_by(Date) %>%
+  summarise(total_emotion_words = sum(n))
+
+total_emotion_words <- sum(total_words_by_date$total_emotion_words, na.rm = TRUE)
+
+# Calculate percentage of NRC emotion words relative to all emotion words by date
+emotion_percentages <- words_by_date %>%
+  group_by(Date) %>%
+  mutate(emotion_percentage = n / total_emotion_words) %>%
+  select(Date, emotion_percentage)
+
+# Plotting the percentages over time
+ggplot(emotion_percentages, aes(x = Date, y = emotion_percentage)) +
+  geom_line() +
+  geom_smooth()+
+  labs(x = "Date", y = "Percentage of NRC emotion words",
+       title = "Percentage of NRC emotion Words Over Time")
+```
+
+It looks like there might be a little bit of seasonality to the data. Which makes a little bit of sense because algal blooms are seasonal but overall there is very little trend.

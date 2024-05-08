@@ -1,0 +1,86 @@
+---
+title: "Lab3"
+author: "Your Name"
+date: "2024-04-17"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(eval=FALSE)
+```
+
+```{r packages, message = FALSE}
+library(quanteda)
+library(tm)
+library(topicmodels)
+library(ldatuning)
+library(tidyverse)
+library(tidytext)
+library(reshape2)
+library(here)
+#Libraries from last week
+library(LexisNexisTools)
+library(dplyr)
+library(readr)
+library(stringr)
+library(here)
+library(tidytext)
+library(tidyr) #pivot_wider()
+library(ggplot2)
+```
+
+### Assignment Lab 3:
+
+Due next week: April 23 at 11:59PM
+
+For this assignment you'll use the article data you downloaded from Nexis Uni in Week 2.
+
+```{r}
+#Load in the data from last week
+post_files <- list.files(pattern = ".docx", path = here("TxtSent1"),
+                      full.names = TRUE, 
+                      recursive = TRUE, 
+                      ignore.case = TRUE)
+
+# read in files
+dat <- lnt_read(post_files, convert_date = FALSE, remove_cover = FALSE)
+
+#Get the text data
+meta_df <- dat@meta
+articles_df <- dat@articles
+paragraphs_df <- dat@paragraphs
+
+#Create a table from the data
+data_tbl<- tibble(Date=meta_df$Date, Headline = meta_df$Headline, id = articles_df$ID, text = articles_df$Article)
+```
+
+1.  Create a corpus from your articles.
+
+```{r}
+corpus <- corpus(x = tbl, text_field = "text")
+```
+
+1.  Clean the data as appropriate.
+
+```{r}
+#load stop words
+add_stops <- data(stop_words)
+#Clean the data
+toks <- tokens(corpus, remove_punct = T, remove_numbers = T)
+#Remove the stop words
+toks1 <- tokens_select(toks, pattern = add_stops, selection = "remove")
+
+dfm1 <- dfm(toks1, tolower = T)
+dfm2 <- dfm_trim(dfm1, min_docfreq = 2)
+
+#head(dfm)
+
+sel_idx <- slam::row_sums(dfm2)>0
+dfm <- dfm2[sel_idx,]
+```
+
+1.  Run three models (i.e. with 3 values of k) and select the overall best value for k (the number of topics) - include some justification for your selection: theory, FindTopicsNumber() optimization metrics, interpretability, LDAvis. Select the best single value of k.
+
+2.  Plot the top terms in each topic and the distribution of topics across a sample of the documents (constrained by what looks good in the plot).
+
+3.  Take a stab at interpreting the resulting topics. What are the key themes discussed in the articles in your data base?

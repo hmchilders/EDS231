@@ -1,0 +1,149 @@
+---
+title: "Lab 4"
+author: "Heather Childers"
+date: "2024-04-24"
+output: html_document
+---
+
+# Lab 4 Assignment: Due May 7 at 11:59pm
+
+### Set-up
+
+Load in the relevant packages and read in the data:
+
+```{r}
+# Load packages
+library(tidytext)
+library(tidyverse)
+library(tidymodels)
+library(textrecipes)
+library(discrim) # naive-bayes
+
+#Read in data
+urlfile ="https://raw.githubusercontent.com/MaRo406/EDS-231-text-sentiment/main/data/climbing_reports_model_dat.csv"
+incidents_df<-readr::read_csv(url(urlfile))
+```
+
+### Create the and eveluate the Machine Learning Model
+
+```{r}
+set.seed(1234) #removes randomness between runs
+
+incidents2class <- incidents_df %>%
+  mutate(fatal = factor(if_else(
+                        is.na(Deadly),
+                        "non-fatal", "fatal")))
+
+
+#Split the data into training and testing data
+incidents_split <- initial_split(incidents2class, strata = fatal)
+
+incidents_train <- training(incidents_split)
+incidents_test <- testing(incidents_split)
+
+#Create the recipe
+recipe <- recipe(fatal ~ Text, data = incidents_train) %>%
+  step_tokenize(Text) %>%
+  step_tokenfilter(Text, max_tokens = 5000) %>%
+  step_tfidf(Text)
+
+#Create the workflow
+incidents_wf <- workflow() %>%
+  add_recipe(recipe)
+```
+
+1.  Select another classification algorithm.
+
+```{r}
+set.seed(808)
+#Specify the k-nearest neighbor model
+knn_spec <- nearest_neighbor(neighbors = 2) %>%
+  set_engine("kknn") %>%
+  set_mode("classification")
+
+# Create a workflow
+knn_workflow <- workflow() %>%
+  add_recipe(recipe)
+
+knn_fit <- knn_workflow %>%
+  add_model(knn_spec) %>% 
+  fit(data = incidents_train)
+```
+
+1.  Conduct an initial out-of-the-box model fit on the training data and prediction on the test data. Assess the performance of this initial model.
+
+```{r}
+# 5-fold CV on the training dataset (instead of 10 for in-class demo)
+cv_folds <- incidents_train %>% vfold_cv(v=5)
+
+# Create a workflow
+knn_workflow <- workflow() %>%
+  add_model(knn_spec) %>%
+  add_recipe(recipe)
+
+#Resample and cross-validate
+knn_res <- 
+  knn_workflow %>%
+  fit_resamples(
+    resamples= cv_folds,
+    control = control_resamples(save_pred = T)
+  )
+
+#check the performance
+knn_res %>% collect_metrics()
+
+```
+
+1.  Select the relevant hyperparameters for your algorithm and tune your model.
+
+```{r}
+#---------------------------------------------------
+#Tune the Hyperparameters
+#---------------------------------------------------
+#Tune the model
+knn_spec_tune <- 
+  nearest_neighbor(neighbors = tune()) %>%
+  set_mode("classification") %>%
+  set_engine("kknn")
+
+#Use the tuned parameter to make a new workflow
+wf_knn_tune <- workflow() %>%
+  add_model(knn_spec_tune) %>%
+  add_recipe(recipe)
+
+# Fit the workflow on our predefined folds and a grid of hyperparameters
+fit_knn_cv <- 
+  wf_knn_tune %>%
+  tune_grid(
+    cv_folds,
+    grid = data.frame(neighbors = c(2,3,4,5))
+  )
+
+# Check the performance with collect_metrics()
+fit_knn_cv %>% collect_metrics()
+
+```
+
+1.  Conduct a model fit using your newly tuned model specification. How does it compare to your out-of-the-box model?
+
+```{r}
+# The final workflow for our KNN model. Finalize_workflow takes a workflow and a set of parameters.  In this case, that set is just the best value of k
+final_wf <- wf_knn_tune %>%
+  finalize_workflow(select_best(fit_knn_cv, metric= "accuracy"))
+
+# Check out the final workflow object.  Choosing accuracy for interpretability in this simple binary context
+final_wf
+
+# Fitting our final workflow
+final_fit <- final_wf %>% fit(data = incidents_train)
+# Examine the final workflow
+final_fit
+```
+
+1.  
+
+    a.  Use variable importance to determine the terms most highly associated with non-fatal reports? What about terms associated with fatal reports? OR
+    b.  If you aren't able to get at variable importance with your selected algorithm, instead tell me how you might in theory be able to do it. Or how you might determine the important distinguishing words in some other way.
+        a.  Two ways that I could find the terms with the highest variable importance are by looking at either the most common terms in each category, the unique words in each category , or both.
+
+2.  Predict fatality of the reports in the test set. Compare this prediction performance to that of the Naive Bayes and Lasso models. Why do you think your model performed as it did, relative to the other two?
